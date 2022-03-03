@@ -1,6 +1,6 @@
-from centroidtracker import CentroidTracker
-from trackableobject import TrackableObject
-from trackableobject import Direction
+from tracking.centroidtracker import CentroidTracker
+from tracking.trackableobject import TrackableObject
+from tracking.trackableobject import Direction
 from imutils.video import VideoStream
 from imutils.video import FPS
 import numpy as np
@@ -18,8 +18,24 @@ argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1,
 args = vars(argument_parser.parse_args());
 
 print("[INFO]: Starting video stream from Webcam...");
-video_Stream = cv2.VideoCapture(0, cv2.CAP_V4L2);
+video_Stream = cv2.VideoCapture("./video/example_01.mp4");
 video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
+
+# initialize the list of class labels MobileNet SSD was trained to
+# detect
+CLASSES = [
+    "background", "aeroplane", "bicycle", "bird", "boat",
+	"bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+	"dog", "horse", "motorbike", "person", "pottedplant", "sheep",
+	"sofa", "train", "tvmonitor"
+];
+
+# Threshold to filter out weak detections
+confidenceThreshold = 0.4;
+
+# load our serialized model from disk
+print("[INFO] loading model...");
+net = cv2.dnn.readNetFromCaffe("./mobilenet_ssd/MobileNetSSD_deploy.prototxt", "./mobilenet_ssd/MobileNetSSD_deploy.caffemodel");
 
 (Height, Width) = (None, None);
 processing_width = 250;
@@ -28,9 +44,6 @@ output_width = 700;
 centroid_tracker = CentroidTracker(30);
 trackers = [];
 trackable_objects = { };
-
-cascade_path = "./haarcascade_frontalface_default.xml";
-face_cascade = cv2.CascadeClassifier(cascade_path);
 
 total_frames = 0;
 total_up = 0;
@@ -71,97 +84,123 @@ while True:
 
     check, frame = video_Stream.read();
 
-    frame = imutils.resize(frame, width=processing_width);
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB);
+    if check:
+        frame = imutils.resize(frame, width=processing_width);
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB);
 
-    if Width is None or Height is None:
-        (Height, Width) = frame.shape[:2];
-    
-    status = "Waiting";
-    rects = [];
+        if Width is None or Height is None:
+            (Height, Width) = frame.shape[:2];
+        
+        status = "Waiting";
+        rects = [];
 
-    # Check if we should use object detection
-    if (current_time - start_time) >= args["skip_seconds"]:
-        start_time = current_time;
-        status = "Detecting";
-        trackers = [];
+        # Check if we should use object detection
+        if (current_time - start_time) >= args["skip_seconds"]:
+            start_time = current_time;
+            status = "Detecting";
+            trackers = [];
 
-        faces = face_cascade.detectMultiScale(
-            frame,
-            scaleFactor = 1.1,
-            minNeighbors = 5
-        );
+            # Convert frame into blob and pass it
+            # through the network to obtain the detections
+            blob = cv2.dnn.blobFromImage(frame, 0.007843, (Width, Height), 127.5);
+            net.setInput(blob);
+            detections = net.forward();
 
-        for x, y, w, h in faces:
-            (startX, startY, endX, endY) = (x, y, x+w, y+h);
-            
-            tracker = dlib.correlation_tracker();
-            rect = dlib.rectangle(startX, startY, endX, endY);
-            tracker.start_track(rgb_frame, rect);
+            # Loop through the detections
+            for i in np.arange(0, detections.shape[2]):
+                # Extract the confidence of the prediction
+                # from the detection
+                confidence = detections[0, 0, i, 2];
 
-            trackers.append(tracker);
-    # If not, utilize object trackers to decrease computational cost
-    else:
-        for tracker in trackers:
-            status = "Tracking";
+                # Filter out the weak detections by 
+                # requiring a minumum confidence
+                if confidence > confidenceThreshold:
+                    # Extract the index of the class 
+                    # label and check if it is person
+                    index = int(detections[0, 0, i, 1]);
 
-            tracker.update(rgb_frame);
+                    if CLASSES[index] != 'person':
+                        continue;
+                    
+                    # Compute the (x, y) - coordinates for the 
+                    # bounding box of the detected person
+                    box = detections[0, 0, i, 3:7] * np.array([Width, Height, Width, Height]);
+                    (startX, startY, endX, endY) = box.astype("int");
 
-            position = tracker.get_position();
-            (startX, startY, endX, endY) = (int(position.left()), int(position.top()), int(position.right()), int(position.bottom()));
-            rects.append((startX, startY, endX, endY));
-    
-    # Draw horizontal line in the middle of the screen
-    cv2.line(frame, (0, Height // 2), (Width, Height // 2), (0, 255, 255), 2);
-    
-    # Get old objects from centroid tracker
-    objects = centroid_tracker.update(rects);
+                    # Construct a dlib rectangle from bounding 
+                    # box coordinates and start a dlib 
+                    # correlation tracker. 
+                    tracker = dlib.correlation_tracker();
+                    rect = dlib.rectangle(startX, startY, endX, endY);
+                    tracker.start_track(rgb_frame, rect);
 
-    for (objectID, centroid) in objects.items():
-
-        trackable_object = trackable_objects.get(objectID, None);
-              
-        if trackable_object is None:
-            trackable_object = TrackableObject(objectID, centroid);
+                    # Add the tracker to our list of trackers
+                    # so we can utilize it during skip frames
+                    trackers.append(tracker);
+        # If not, utilize object trackers to decrease computational cost
         else:
-            y = [c[1] for c in trackable_object.centroids];
-            direction = centroid[1] - np.mean(y);
-            trackable_object.centroids.append(centroid);
+            for tracker in trackers:
+                status = "Tracking";
 
-            if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
-                create_AWS_thread();
-                total_up += 1;
-                trackable_object.trackingDirection = Direction.Down;
-            elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
-                create_AWS_thread();
-                total_down += 1;
-                trackable_object.trackingDirection = Direction.Up;
+                tracker.update(rgb_frame);
 
-        # Store the trackable object in our dictionary
-        trackable_objects[objectID] = trackable_object;
+                position = tracker.get_position();
+                (startX, startY, endX, endY) = (int(position.left()), int(position.top()), int(position.right()), int(position.bottom()));
+                rects.append((startX, startY, endX, endY));
+        
+        # Draw horizontal line in the middle of the screen
+        cv2.line(frame, (0, Height // 2), (Width, Height // 2), (0, 255, 255), 2);
+        
+        # Get old objects from centroid tracker
+        objects = centroid_tracker.update(rects);
 
-        # Draw both ID of the object and its centroid
-        text = "ID {}".format(objectID);
-        cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2);
-        cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1);
-    
-    # Construct tuple of information to display on the frame
-    info = [ ("Up", total_up), ("Down", total_down), ("Status", status) ];
+        for (objectID, centroid) in objects.items():
 
-    # Loop through the info tuples and display them on the frame
-    for (i, (k, v)) in enumerate(info):
-        text = "{}: {}".format(k, v);
-        cv2.putText(frame, text, (10,  ((i * 20) + 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2);
-    
-    # Display the frame
-    frame = imutils.resize(frame, width=output_width);
-    cv2.imshow("Frame", frame);
+            trackable_object = trackable_objects.get(objectID, None);
+                
+            if trackable_object is None:
+                trackable_object = TrackableObject(objectID, centroid);
+            else:
+                y = [c[1] for c in trackable_object.centroids];
+                direction = centroid[1] - np.mean(y);
+                trackable_object.centroids.append(centroid);
 
-    if cv2.waitKey(1) & 0xFF == ord("q"):
+                if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
+                    create_AWS_thread();
+                    total_up += 1;
+                    trackable_object.trackingDirection = Direction.Down;
+                elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
+                    create_AWS_thread();
+                    total_down += 1;
+                    trackable_object.trackingDirection = Direction.Up;
+
+            # Store the trackable object in our dictionary
+            trackable_objects[objectID] = trackable_object;
+
+            # Draw both ID of the object and its centroid
+            text = "ID {}".format(objectID);
+            cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2);
+            cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1);
+        
+        # Construct tuple of information to display on the frame
+        info = [ ("Up", total_up), ("Down", total_down), ("Status", status) ];
+
+        # Loop through the info tuples and display them on the frame
+        for (i, (k, v)) in enumerate(info):
+            text = "{}: {}".format(k, v);
+            cv2.putText(frame, text, (10,  ((i * 20) + 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2);
+        
+        # Display the frame
+        frame = imutils.resize(frame, width=output_width);
+        cv2.imshow("Frame", frame);
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break;
+        
+        # Update timer and total number of frames elapsed
+        fps.update();
+    else:
         break;
-    
-    # Update timer and total number of frames elapsed
-    fps.update();
 
 # Print information
 fps.stop();
