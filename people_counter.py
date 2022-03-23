@@ -7,6 +7,7 @@ import numpy as np
 import threading
 import argparse
 import imutils
+import torch
 import time
 import dlib
 import time
@@ -29,16 +30,9 @@ video_framerate = video_Stream.get(cv2.CAP_PROP_FPS) + 10;
 labelsPath = os.path.sep.join([args["yolo"], "coco.names"]);
 CLASSES = open(labelsPath).read().strip().split("\n");
 
-# derive the paths to the YOLO weights and model configuration
-weightsPath = os.path.sep.join([args["yolo"], "yolov5s.weights"]);
-configurationPath = os.path.sep.join([args["yolo"], "yolov5s.cfg"]);
-
 # load our YOLO object detector trained on COCO dataset
-print("[INFO] loading YOLO from disk...");
-net = cv2.dnn.readNetFromDarknet(configurationPath, weightsPath);
-
-# determine only the *output* layer names that we need from YOLO
-outputLayers = net.getUnconnectedOutLayersNames();
+print("[INFO] loading YoloV5 from PyTorch...");
+model = torch.hub.load('ultralytics/yolov5', 'yolov5m');
 
 (Height, Width) = (None, None);
 processing_width = 250;
@@ -103,68 +97,34 @@ while True:
         start_time = current_time;
         status = "Detecting";
         trackers = [];
-
-        # Convert frame into blob and pass it
-        # through the network to obtain the detections
-        blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False);
-        net.setInput(blob);
-        layerOutputs = net.forward(outputLayers);
-
-        # Initialize our lists of bounding boxes, confidences and classIDs respectively
-        boxes = [];
-        confidences = [];
-        classIDs = [];
-
-        # Loop through each layer output
-        for output in layerOutputs:
-            # Loop through each detection of each output
-            for detection in output:
-                # Extract classID and confidence score of current detection
-                scores = detection[5:];
-                classID = np.argmax(scores);
-                confidence = scores[classID];
-                
-                # Filter out weak detections
-                if confidence > args["confidence"]:
-                    # Scale bounding box coordinates back to size of original image
-                    box = detection[0:4] * np.array([Width, Height, Width, Height]);
-                    (centerX, centerY, width, height) = box.astype("int");
-
-                    # Use (x, y)-coordinates to derive top and left corner of bounding box
-                    x = int(centerX - (width / 2));
-                    y = int(centerY - (height / 2));
-
-                    # Update our lists of boxes, confidences and classIDs
-                    boxes.append([x, y, int(width), int(height)]);
-                    confidences.append(float(confidence));
-                    classIDs.append(classID);
         
-        # Apply non maxima suppression to suppress weak, overlapping bounding boxes
-        indices = cv2.dnn.NMSBoxes(boxes, confidences, args["confidence"], args["threshold"]);
+        # Fetch results from the YoloV5 neural network
+        results = model(rgb_frame);
 
-        # Ensure that at least one detection exists
-        if len(indices) > 0:
-            # Loop over the indices we've kept
-            for i in indices.flatten():
-                # Check whether detection is a person or not
-                if CLASSES[classIDs[i]] != 'person':
-                    continue;
-                
-                # Extract bounding box coordinates
-                (x, y) = (boxes[i][0], boxes[i][1]);
-                (w, h) = (boxes[i][2], boxes[i][3]);
-                (startX, startY, endX, endY) = (x, y, x + w, y + h);
+        # Get number of detections and information about the detection
+        num_detections = len(results.xyxyn[0].numpy());
+        classIDs, detections = results.xyxyn[0][:, -1].numpy(), results.xyxyn[0][:, :-1].numpy();
 
-                # Construct a dlib rectangle from bounding 
-                # box coordinates and start a dlib 
-                # correlation tracker. 
-                tracker = dlib.correlation_tracker();
-                rect = dlib.rectangle(startX, startY, endX, endY);
-                tracker.start_track(rgb_frame, rect);
+        # Loop through all detections
+        for i in range(num_detections):
+            # Check if detection is above confidence threshold and if detection is a person, if not, skip to next detection
+            detection = detections[i];
+            if detection[4] < args["confidence"] or CLASSES[int(classIDs[i])] != 'person':
+                continue;
 
-                # Add the tracker to our list of trackers
-                # so we can utilize it during skip frames
-                trackers.append(tracker);
+            # Extract bounding box coordinates of the detection
+            (startX, startY, endX, endY) = (int(detection[0]*Width), int(detection[1]*Height), int(detection[2]*Width), int(detection[3]*Height));
+
+            # Construct a dlib rectangle from bounding 
+            # box coordinates and start a dlib 
+            # correlation tracker. 
+            tracker = dlib.correlation_tracker();
+            rect = dlib.rectangle(startX, startY, endX, endY);
+            tracker.start_track(rgb_frame, rect);
+
+            # Add the tracker to our list of trackers
+            # so we can utilize it during skip frames
+            trackers.append(tracker);
     # If not, utilize object trackers to decrease computational cost
     else:
         for tracker in trackers:
