@@ -32,7 +32,8 @@ CLASSES = open(labelsPath).read().strip().split("\n");
 
 # load our YOLO object detector trained on COCO dataset
 print("[INFO] loading YoloV5 from PyTorch...");
-model = torch.hub.load('ultralytics/yolov5', 'yolov5m');
+device = '0' if torch.cuda.is_available() else 'cpu';
+model = torch.hub.load('ultralytics/yolov5', 'yolov5m', device=device, force_reload=True, pretrained=True);
 
 (Height, Width) = (None, None);
 processing_width = 250;
@@ -98,12 +99,15 @@ while True:
         status = "Detecting";
         trackers = [];
         
+        before = time.perf_counter();
         # Fetch results from the YoloV5 neural network
         results = model(rgb_frame);
+        after = time.perf_counter();
+        print(f'YoloV5 inference time: {after - before} seconds');
 
         # Get number of detections and information about the detection
-        num_detections = len(results.xyxyn[0].numpy());
-        classIDs, detections = results.xyxyn[0][:, -1].numpy(), results.xyxyn[0][:, :-1].numpy();
+        num_detections = len(results.xyxyn[0].cpu().numpy());
+        classIDs, detections = results.xyxyn[0][:, -1].cpu().numpy(), results.xyxyn[0][:, :-1].cpu().numpy();
 
         # Loop through all detections
         for i in range(num_detections):
