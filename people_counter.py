@@ -1,36 +1,55 @@
-from centroidtracker import CentroidTracker
-from trackableobject import TrackableObject
-from trackableobject import Direction
+from tracking.centroidtracker import CentroidTracker
+from tracking.trackableobject import TrackableObject
+from tracking.trackableobject import Direction
+import torchvision.transforms as transforms
 from imutils.video import VideoStream
 from imutils.video import FPS
 import numpy as np
+import torchvision
 import threading
 import argparse
 import imutils
+import torch
 import time
 import dlib
 import time
 import cv2
+import os
 
 argument_parser = argparse.ArgumentParser();
-argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1,
-    help="Number of frames skipped between detections");
+argument_parser.add_argument("-d", "--datasets", default="datasets", help="Base directory for datasets");
+argument_parser.add_argument("-c", "--confidence", type=float, default=0.5, help="Minimum probability to filter out weak detections");
+argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, help="Number of frames skipped between detections");
 args = vars(argument_parser.parse_args());
 
 print("[INFO]: Starting video stream from Webcam...");
-video_Stream = cv2.VideoCapture(0, cv2.CAP_V4L2);
+video_Stream = cv2.VideoCapture("./video/example_01.mp4");
+# video_Stream = cv2.VideoCapture(0, cv2.CAP_V4L2);
 video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
+
+# load the COCO class labels our YOLO model was trained on
+labelsPath = os.path.sep.join([args["datasets"], "coco.names"]);
+CLASSES = open(labelsPath).read().strip().split("\n");
 
 (Height, Width) = (None, None);
 processing_width = 250;
 output_width = 700;
 
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+print("[INFO] loading Faster RCNN from TorchVision...");
+model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True);
+model.eval();
+
+# Define a transform to convert
+# an image to a torch tensor
+transform = transforms.Compose([
+    transforms.ToTensor()
+])
+
 centroid_tracker = CentroidTracker(30);
 trackers = [];
 trackable_objects = { };
-
-cascade_path = "./haarcascade_frontalface_default.xml";
-face_cascade = cv2.CascadeClassifier(cascade_path);
 
 total_frames = 0;
 total_up = 0;
@@ -86,19 +105,34 @@ while True:
         status = "Detecting";
         trackers = [];
 
-        faces = face_cascade.detectMultiScale(
-            frame,
-            scaleFactor = 1.1,
-            minNeighbors = 5
-        );
+        # Fetch results from the Faster RCNN model
+        input_tensor = transform(rgb_frame);
+        input_tensor = input_tensor.unsqueeze_(0);
 
-        for x, y, w, h in faces:
-            (startX, startY, endX, endY) = (x, y, x+w, y+h);
-            
+        before = time.perf_counter();
+        results = model(input_tensor);
+        results = results[0];
+        after = time.perf_counter();
+        print(f'Inference time: {after - before}s');
+        
+        # Loop through all detections
+        for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
+            # Check if detection is above confidence threshold and if detection is a person, if not, skip to next detection
+            if int(score) < args["confidence"] or CLASSES[int(label)] != 'person':
+                continue;
+
+            # Extract bounding box coordinates of the detection
+            (startX, startY, endX, endY) = box;
+
+            # Construct a dlib rectangle from bounding 
+            # box coordinates and start a dlib 
+            # correlation tracker. 
             tracker = dlib.correlation_tracker();
             rect = dlib.rectangle(startX, startY, endX, endY);
             tracker.start_track(rgb_frame, rect);
 
+            # Add the tracker to our list of trackers
+            # so we can utilize it during skip frames
             trackers.append(tracker);
     # If not, utilize object trackers to decrease computational cost
     else:
