@@ -26,6 +26,7 @@ print("[INFO]: Starting video stream from Webcam...");
 video_Stream = cv2.VideoCapture("./video/example_01.mp4");
 # video_Stream = cv2.VideoCapture(0, cv2.CAP_V4L2);
 video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
+video_framerate = video_Stream.get(cv2.CAP_PROP_FPS) + 10;
 
 # load the COCO class labels our YOLO model was trained on
 labelsPath = os.path.sep.join([args["datasets"], "coco.names"]);
@@ -39,6 +40,7 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 
 print("[INFO] loading Faster RCNN from TorchVision...");
 model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True);
+model.cuda();
 model.eval();
 
 # Define a transform to convert
@@ -90,6 +92,9 @@ while True:
 
     check, frame = video_Stream.read();
 
+    if frame is None:
+        break;
+
     frame = imutils.resize(frame, width=processing_width);
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB);
 
@@ -110,7 +115,7 @@ while True:
         input_tensor = input_tensor.unsqueeze_(0);
 
         before = time.perf_counter();
-        results = model(input_tensor);
+        results = model(input_tensor.cuda());
         results = results[0];
         after = time.perf_counter();
         print(f'Inference time: {after - before}s');
@@ -118,7 +123,8 @@ while True:
         # Loop through all detections
         for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
             # Check if detection is above confidence threshold and if detection is a person, if not, skip to next detection
-            if int(score) < args["confidence"] or CLASSES[int(label)] != 'person':
+            score = score.item();
+            if score < args["confidence"] or CLASSES[int(label) - 1] != 'person':
                 continue;
 
             # Extract bounding box coordinates of the detection
@@ -196,6 +202,11 @@ while True:
     
     # Update timer and total number of frames elapsed
     fps.update();
+
+    # Ensure fixed framerate based on video framerate
+    timeDiff = time.time() - current_time;
+    if(timeDiff < 1.0/(video_framerate)):
+        time.sleep(1.0/(video_framerate) - timeDiff);
 
 # Print information
 fps.stop();
