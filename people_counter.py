@@ -37,6 +37,9 @@ confidenceThreshold = 0.3;
 # load our serialized model from disk
 print("[INFO] loading model...");
 net = cv2.dnn.readNetFromCaffe("./mobilenet_ssd/MobileNetSSD_deploy.prototxt", "./mobilenet_ssd/MobileNetSSD_deploy.caffemodel");
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+
 
 (Height, Width) = (None, None);
 processing_width = 250;
