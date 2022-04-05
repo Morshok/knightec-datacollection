@@ -32,7 +32,7 @@ CLASSES = open(labelsPath).read().strip().split("\n");
 
 # load our YOLO object detector trained on COCO dataset
 print("[INFO] loading YoloV5 from PyTorch...");
-device = '0' if torch.cuda.is_available() else 'cpu';
+device = 'cpu';
 model = torch.hub.load('ultralytics/yolov5', 'yolov5m', device=device, force_reload=True, pretrained=True);
 
 (Height, Width) = (None, None);
