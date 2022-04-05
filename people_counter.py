@@ -40,7 +40,6 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 
 print("[INFO] loading Faster RCNN from TorchVision...");
 model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True);
-model.cuda();
 model.eval();
 
 # Define a transform to convert
@@ -115,7 +114,7 @@ while True:
         input_tensor = input_tensor.unsqueeze_(0);
 
         before = time.perf_counter();
-        results = model(input_tensor.cuda());
+        results = model(input_tensor);
         results = results[0];
         after = time.perf_counter();
         print(f'Inference time: {after - before}s');
