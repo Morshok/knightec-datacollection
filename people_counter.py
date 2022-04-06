@@ -108,8 +108,11 @@ while True:
         # Convert frame into blob and pass it
         # through the network to obtain the detections
         blob = cv2.dnn.blobFromImage(frame, 0.007843, (Width, Height), 127.5);
+	before = time.perf_counter();
         net.setInput(blob);
         detections = net.forward();
+	after = time.perf_counter();
+	print(f'Inference time: {after - before}s');
 
         # Loop through the detections
         for i in np.arange(0, detections.shape[2]):
