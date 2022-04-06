@@ -22,7 +22,7 @@ argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, help="
 args = vars(argument_parser.parse_args());
 
 #print("[INFO]: Starting video stream from Webcam...");
-video_Stream = cv2.VideoCapture("./video/example_01.mp4");
+video_Stream = cv2.VideoCapture("./video/Test_Video_3.mp4");
 video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
 video_framerate = video_Stream.get(cv2.CAP_PROP_FPS) + 10;
 
@@ -158,11 +158,11 @@ while True:
             trackable_object.centroids.append(centroid);
 
             if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
-                create_AWS_thread();
+                # create_AWS_thread();
                 total_out += 1;
                 trackable_object.trackingDirection = Direction.Down;
             elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
-                create_AWS_thread();
+                # create_AWS_thread();
                 total_in += 1;
                 trackable_object.trackingDirection = Direction.Up;
 
@@ -201,6 +201,7 @@ while True:
 fps.stop();
 print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()));
 print("[INFO] approximate FPS: {:.2f}".format(fps.fps()));
+print(f'[INFO] Found {total_in} people entering, and {total_out} people exiting...');
 
 # Release resources and close application
 video_Stream.release();
