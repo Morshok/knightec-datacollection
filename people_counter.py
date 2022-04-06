@@ -169,11 +169,11 @@ while True:
             trackable_object.centroids.append(centroid);
 
             if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
-                create_AWS_thread();
+                # create_AWS_thread();
                 total_up += 1;
                 trackable_object.trackingDirection = Direction.Down;
             elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
-                create_AWS_thread();
+                # create_AWS_thread();
                 total_down += 1;
                 trackable_object.trackingDirection = Direction.Up;
 
@@ -212,6 +212,7 @@ while True:
 fps.stop();
 print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()));
 print("[INFO] approximate FPS: {:.2f}".format(fps.fps()));
+print(f'[INFO] Found {total_in} people entering, and {total_out} people exiting...');
 
 # Release resources and close application
 video_Stream.release();
