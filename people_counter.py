@@ -22,7 +22,7 @@ argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, help="
 args = vars(argument_parser.parse_args());
 
 #print("[INFO]: Starting video stream from Webcam...");
-video_Stream = cv2.VideoCapture("./video/Test_Video_3.mp4");
+video_Stream = cv2.VideoCapture("./video/example_01.mp4");
 video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
 video_framerate = video_Stream.get(cv2.CAP_PROP_FPS) + 10;
 
