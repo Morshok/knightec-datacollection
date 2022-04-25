@@ -21,19 +21,23 @@ argument_parser.add_argument("-t", "--threshold", type=float, default=0.3, help=
 argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, help="Number of frames skipped between detections");
 args = vars(argument_parser.parse_args());
 
-#print("[INFO]: Starting video stream from Webcam...");
+print("[INFO]: Starting video stream...");
 video_Stream = cv2.VideoCapture("./video/example_01.mp4");
 video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
 video_framerate = video_Stream.get(cv2.CAP_PROP_FPS) + 10;
 
 # load the COCO class labels our YOLO model was trained on
-labelsPath = os.path.sep.join([args["yolo"], "coco.names"]);
-CLASSES = open(labelsPath).read().strip().split("\n");
+classesPath = os.path.sep.join([args["yolo"], "coco.names"]);
+CLASSES = open(classesPath).read().strip().split("\n");
+
+# load the paths to the Yolo onnx file
+onnxPath = os.path.sep.join([args["yolo"], "yolov5s.onnx"]);
 
 # load our YOLO object detector trained on COCO dataset
-print("[INFO] loading YoloV5 from PyTorch...");
-device = '0' if torch.cuda.is_available() else 'cpu';
-model = torch.hub.load('ultralytics/yolov5', 'yolov5m', device=device, force_reload=True, pretrained=True);
+print("[INFO] loading YoloV5 from disk...");
+net = cv2.dnn.readNet(onnxPath);
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA);
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16);
 
 (Height, Width) = (None, None);
 processing_width = 250;
@@ -75,6 +79,88 @@ def contact_AWS():
     total_out = 0;
     aws_updating_in_progress = False;
 
+def format_for_yolov5_inference(frame):
+    width, height, channels = frame.shape;
+    maxOfWidthOrHeight = max(width, height);
+
+    result = np.zeros((maxOfWidthOrHeight, maxOfWidthOrHeight, 3), np.uint8);
+    result[0:width, 0:height] = frame;
+    
+    return result;
+
+def perform_yolov5_inference(input_image, net):
+    blob = cv2.dnn.blobFromImage(input_image, 1 / 255.0, (640, 640), swapRB=True, crop=False);
+    net.setInput(blob);
+    
+    before = time.perf_counter();
+    predictions = net.forward();
+    after = time.perf_counter();
+    print(f"[INFO] YoloV5 inference time: {after - before}s");
+
+    return predictions;
+
+def unwrap_yolov5_detections(input_image, predictions, confidence_threshold, nms_threshold):
+    boxes = [];
+    classIDs = [];
+    confidences = [];
+
+    num_rows = predictions.shape[0];
+
+    image_width, image_height, channels = input_image.shape;
+    x_factor = image_width / 640;
+    y_factor = image_height / 640;
+
+    for r in range(num_rows):
+        row = predictions[r];
+        confidence = row[4];
+
+        if confidence > confidence_threshold:
+            class_scores = row[5:];
+            _, _, _, max_index = cv2.minMaxLoc(class_scores);
+            classID = max_index[1];
+
+            (x, y, w, h) = (row[0].item(), row[1].item(), row[2].item(), row[3].item())
+            (startX, startY, endX, endY) = (int((x - 0.5 * w) * x_factor), int((y - 0.5 * h) * y_factor), int(w * x_factor), int(h * y_factor));
+            box = np.array([startX, startY, endX, endY]);
+
+            boxes.append(box);
+            classIDs.append(classID);
+            confidences.append(confidence);
+
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, nms_threshold);
+
+    resulting_boxes = [];
+    resulting_classIDs = [];
+    resulting_confidences = [];
+
+    for i in indices:
+        resulting_boxes.append(boxes[i]);
+        resulting_classIDs.append(classIDs[i]);
+        resulting_confidences.append(confidences[i]);
+
+    return resulting_boxes, resulting_classIDs, resulting_confidences;
+
+def process_yolov5_detection(boxes, classIDs, confidences, rgb_frame):
+    for (box, classID, confidence) in zip(boxes, classIDs, confidences):
+        if CLASSES[classID] != "person":
+            continue;
+        
+        # Extract bounding box coordinates
+        (x, y) = (box[0], box[1]);
+        (w, h) = (box[2], box[3]);
+        (startX, startY, endX, endY) = (x, y, x + w, y + h);
+
+        # Construct a dlib rectangle from bounding 
+        # box coordinates and start a dlib 
+        # correlation tracker. 
+        tracker = dlib.correlation_tracker();
+        rect = dlib.rectangle(startX, startY, endX, endY);
+        tracker.start_track(rgb_frame, rect);
+
+        # Add the tracker to our list of trackers
+        # so we can utilize it during skip frames
+        trackers.append(tracker);
+
 start_time = time.time();
 while True:
     current_time = time.time();
@@ -98,37 +184,11 @@ while True:
         start_time = current_time;
         status = "Detecting";
         trackers = [];
-        
-        before = time.perf_counter();
-        # Fetch results from the YoloV5 neural network
-        results = model(rgb_frame);
-        after = time.perf_counter();
-        print(f'YoloV5 inference time: {after - before} seconds');
 
-        # Get number of detections and information about the detection
-        num_detections = len(results.xyxyn[0].cpu().numpy());
-        classIDs, detections = results.xyxyn[0][:, -1].cpu().numpy(), results.xyxyn[0][:, :-1].cpu().numpy();
-
-        # Loop through all detections
-        for i in range(num_detections):
-            # Check if detection is above confidence threshold and if detection is a person, if not, skip to next detection
-            detection = detections[i];
-            if detection[4] < args["confidence"] or CLASSES[int(classIDs[i])] != 'person':
-                continue;
-
-            # Extract bounding box coordinates of the detection
-            (startX, startY, endX, endY) = (int(detection[0]*Width), int(detection[1]*Height), int(detection[2]*Width), int(detection[3]*Height));
-
-            # Construct a dlib rectangle from bounding 
-            # box coordinates and start a dlib 
-            # correlation tracker. 
-            tracker = dlib.correlation_tracker();
-            rect = dlib.rectangle(startX, startY, endX, endY);
-            tracker.start_track(rgb_frame, rect);
-
-            # Add the tracker to our list of trackers
-            # so we can utilize it during skip frames
-            trackers.append(tracker);
+        input_image = format_for_yolov5_inference(frame);
+        predictions = perform_yolov5_inference(input_image, net);
+        boxes, classIDs, confidences = unwrap_yolov5_detections(input_image, predictions[0], args["confidence"], args["threshold"]);
+        process_yolov5_detection(boxes, classIDs, confidences, rgb_frame);
     # If not, utilize object trackers to decrease computational cost
     else:
         for tracker in trackers:
