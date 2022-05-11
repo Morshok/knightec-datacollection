@@ -1,13 +1,11 @@
 from tracking.centroidtracker import CentroidTracker
 from tracking.trackableobject import TrackableObject
 from tracking.trackableobject import Direction
-from imutils.video import VideoStream
 from imutils.video import FPS
 import numpy as np
 import threading
 import argparse
 import imutils
-import torch
 import time
 import dlib
 import time
@@ -15,53 +13,92 @@ import cv2
 import os
 
 argument_parser = argparse.ArgumentParser();
-argument_parser.add_argument("-y", "--yolo", default="yolov5", help="Base path to yolo directory");
-argument_parser.add_argument("-c", "--confidence", type=float, default=0.5, help="Minimum probability to filter out weak detections");
-argument_parser.add_argument("-t", "--threshold", type=float, default=0.3, help="Threshold when applying non maxima suppression");
-argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, help="Number of frames skipped between detections");
+argument_parser.add_argument("-y", "--yolo", default="yolov5", 
+                            help="Base path to yolo directory");
+argument_parser.add_argument("-c", "--confidence", type=float, default=0.5, 
+                            help="Minimum probability to filter out weak detections");
+argument_parser.add_argument("-t", "--threshold", type=float, default=0.3, 
+                            help="Threshold when applying non maxima suppression");
+argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, 
+                            help="Number of frames skipped between detections");
 args = vars(argument_parser.parse_args());
 
-print("[INFO]: Starting video stream...");
-video_Stream = cv2.VideoCapture("./video/example_01.mp4");
-video_Stream.set(cv2.CAP_PROP_BUFFERSIZE, 1);
-video_framerate = video_Stream.get(cv2.CAP_PROP_FPS) + 10;
+def load_video_capture(use_camera):
+    print("[INFO]: Starting video stream...");
 
-# load the COCO class labels our YOLO model was trained on
-classesPath = os.path.sep.join([args["yolo"], "coco.names"]);
-CLASSES = open(classesPath).read().strip().split("\n");
+    if(not use_camera):
+        video_capture = cv2.VideoCapture("./video/example_01.mp4");
+        return video_capture;
 
-# load the paths to the Yolo onnx file
-onnxPath = os.path.sep.join([args["yolo"], "yolov5s.onnx"]);
+    video_capture = cv2.VideoCapture(0, cv2.CAP_V4L2);
+    return video_capture;
 
-# load our YOLO object detector trained on COCO dataset
-print("[INFO] loading YoloV5 from disk...");
-net = cv2.dnn.readNet(onnxPath);
-net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA);
-net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16);
+def load_coco_class_labels(args):
+    classesPath = os.path.sep.join([args["yolo"], "coco.names"]);
+    classes = open(classesPath).read().strip().split("\n");
 
+    return classes;
+
+def build_yolov5_net(args):
+    print("[INFO] loading YoloV5 from disk...");
+
+    onnxPath = os.path.sep.join([args["yolo"], "yolov5s.onnx"]);
+
+    net = cv2.dnn.readNet(onnxPath);
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA);
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16);
+
+    return net;
+
+# Load video capture and get video frame rate.
+# Set use_camera to True to use camera instead of video
+video_capture = load_video_capture(use_camera=True);
+video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1);
+video_framerate = video_capture.get(cv2.CAP_PROP_FPS);
+
+# Load the COCO class labels our YOLO model was trained on
+CLASSES = load_coco_class_labels(args=args);
+
+# Load our YOLO object detector trained on COCO dataset
+# given the path to the onnx file
+net = build_yolov5_net(args=args);
+
+# Variables for getting the height 
+# and the width of the frame
 (Height, Width) = (None, None);
-processing_width = 250;
+
+# Variables for controlling the width and height
+# while performing OpenCV operations
+processing_width = 300;
 output_width = 700;
 
+# Initialize a centroid tracker with
+# a maxDisappeared value of 30
 centroid_tracker = CentroidTracker(30);
+
+# Initialize lists and arrays for 
+# trackers and trackable objects
 trackers = [];
 trackable_objects = { };
 
-total_out = 0;
-total_in = 0;
+# Variables for keeping track of 
+# how many people have moved in or out
+(total_out, total_in) = (0, 0);
 
+# Initialize and start fps counter
 fps = FPS().start();
 
-# After how many seconds should we contanct AWS
-# and reset our variables?
+# Variables for how long we should wait
+# until we contact aws, and whether or not
+# an update is already in progress
 aws_update_time_sec = 15;
 aws_updating_in_progress = False;
 
 def create_AWS_thread():
-    global aws_updating_in_progress;
+    global aws_update_time_sec, aws_updating_in_progress;
 
     if not aws_updating_in_progress:
-        print("[INFO] Contacting AWS for updates in {} seconds".format(aws_update_time_sec));
+        print(f"[INFO]: Contacting AWS for updates in {aws_update_time_sec} seconds");
         thread = threading.Thread(target=contact_AWS);
         thread.start();
         aws_updating_in_progress = True;
@@ -71,10 +108,10 @@ def contact_AWS():
 
     time.sleep(aws_update_time_sec);
 
-    print("[Info] Contacting Aws...");
-    time.sleep(2.0);
-    print("{} persons entered".format(total_in));
-    print("{} persons exited".format(total_out));
+    print("[Info]: Contacting AWS...");
+    print(f"{total_in} persons entered");
+    print(f"{total_out} persons exited");
+
     total_in = 0;
     total_out = 0;
     aws_updating_in_progress = False;
@@ -141,6 +178,8 @@ def unwrap_yolov5_detections(input_image, predictions, confidence_threshold, nms
     return resulting_boxes, resulting_classIDs, resulting_confidences;
 
 def process_yolov5_detection(boxes, classIDs, confidences, rgb_frame):
+    global CLASSES, trackers;
+
     for (box, classID, confidence) in zip(boxes, classIDs, confidences):
         if CLASSES[classID] != "person":
             continue;
@@ -161,18 +200,26 @@ def process_yolov5_detection(boxes, classIDs, confidences, rgb_frame):
         # so we can utilize it during skip frames
         trackers.append(tracker);
 
-start_time = time.time();
+# Get start time
+start_time = time.perf_counter();
 while True:
-    current_time = time.time();
+    # Get current time
+    current_time = time.perf_counter();
 
-    check, frame = video_Stream.read();
+    # Read frame from Videocapture
+    check, frame = video_capture.read();
 
+    # If no more frames could be read
+    # (End of video), break out of the 
+    # loop, terminating the program
     if frame is None:
         break;
 
+    # Resize frame and convert from BGR to RGB
     frame = imutils.resize(frame, width=processing_width);
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB);
 
+    # Get width of the frame if not already fetched
     if Width is None or Height is None:
         (Height, Width) = frame.shape[:2];
     
@@ -189,6 +236,7 @@ while True:
         predictions = perform_yolov5_inference(input_image, net);
         boxes, classIDs, confidences = unwrap_yolov5_detections(input_image, predictions[0], args["confidence"], args["threshold"]);
         process_yolov5_detection(boxes, classIDs, confidences, rgb_frame);
+
     # If not, utilize object trackers to decrease computational cost
     else:
         for tracker in trackers:
@@ -206,12 +254,19 @@ while True:
     # Get old objects from centroid tracker
     objects = centroid_tracker.update(rects);
 
+    # Loop through all old objects from the centroid tracker
     for (objectID, centroid) in objects.items():
 
+        # Try and get trackable object with objectID
         trackable_object = trackable_objects.get(objectID, None);
             
+        # If trackable object is None, create a 
+        # new trackable object with objectID
         if trackable_object is None:
             trackable_object = TrackableObject(objectID, centroid);
+        # Else, determine the direction of movement for the current
+        # centroid, and increment total_in/total_out as well as 
+        # contact aws if applicable.
         else:
             y = [c[1] for c in trackable_object.centroids];
             direction = centroid[1] - np.mean(y);
@@ -234,7 +289,7 @@ while True:
         cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2);
         cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1);
     
-    # Construct tuple of information to display on the frame
+    # Construct tuples of information to display on the frame
     info = [ ("Exited", total_out), ("Entered", total_in), ("Status", status) ];
 
     # Loop through the info tuples and display them on the frame
@@ -246,6 +301,9 @@ while True:
     frame = imutils.resize(frame, width=output_width);
     cv2.imshow("Frame", frame);
 
+    # Check if 'q' has been pressed, and 
+    # break out of the loop, terminating
+    # the program if it has been
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break;
     
@@ -257,12 +315,14 @@ while True:
     if(timeDiff < 1.0/(video_framerate)):
         time.sleep(1.0/(video_framerate) - timeDiff);
 
-# Print information
+# Stop fps counter
 fps.stop();
-print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()));
-print("[INFO] approximate FPS: {:.2f}".format(fps.fps()));
-print(f'[INFO] Found {total_in} people entering, and {total_out} people exiting...');
+
+# Print information
+print("[INFO]: elapsed time: {:.2f}".format(fps.elapsed()));
+print("[INFO]: approximate FPS: {:.2f}".format(fps.fps()));
+print(f'[INFO]: Found {total_in} people entering, and {total_out} people exiting...');
 
 # Release resources and close application
-video_Stream.release();
+video_capture.release();
 cv2.destroyAllWindows();
