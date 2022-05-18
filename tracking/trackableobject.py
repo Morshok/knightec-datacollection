@@ -15,4 +15,3 @@ class TrackableObject():
             # Initialize a boolean to indicate whether
             # object has been counted or not
             self.trackingDirection = Direction.Still;
-            self.hasBeenCounted = False;

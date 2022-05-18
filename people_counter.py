@@ -12,6 +12,9 @@ import time
 import cv2
 import os
 
+# Argument parser if code is run from terminal, with set default 
+# values in case code is run inside of an IDE, or no arguments 
+# are given from terminal
 argument_parser = argparse.ArgumentParser();
 argument_parser.add_argument("-y", "--yolo", default="yolov5", 
                             help="Base path to yolo directory");
@@ -20,7 +23,7 @@ argument_parser.add_argument("-c", "--confidence", type=float, default=0.5,
 argument_parser.add_argument("-t", "--threshold", type=float, default=0.3, 
                             help="Threshold when applying non maxima suppression");
 argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1, 
-                            help="Number of frames skipped between detections");
+                            help="Number of seconds skipped between detections");
 args = vars(argument_parser.parse_args());
 
 def load_video_capture(use_camera):
@@ -28,10 +31,11 @@ def load_video_capture(use_camera):
 
     if(not use_camera):
         video_capture = cv2.VideoCapture("./video/example_01.mp4");
-        return video_capture;
+        video_framerate = video_capture.get(cv2.CAP_PROP_FPS);
+        return video_capture, video_framerate;
 
     video_capture = cv2.VideoCapture(0, cv2.CAP_V4L2);
-    return video_capture;
+    return video_capture, None;
 
 def load_coco_class_labels(args):
     classesPath = os.path.sep.join([args["yolo"], "coco.names"]);
@@ -40,7 +44,7 @@ def load_coco_class_labels(args):
     return classes;
 
 def build_yolov5_net(args):
-    print("[INFO] loading YoloV5 from disk...");
+    print("[INFO]: loading YoloV5 from disk...");
 
     onnxPath = os.path.sep.join([args["yolo"], "yolov5s.onnx"]);
 
@@ -52,9 +56,8 @@ def build_yolov5_net(args):
 
 # Load video capture and get video frame rate.
 # Set use_camera to True to use camera instead of video
-video_capture = load_video_capture(use_camera=True);
+video_capture, video_framerate = load_video_capture(use_camera=True);
 video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1);
-video_framerate = video_capture.get(cv2.CAP_PROP_FPS);
 
 # Load the COCO class labels our YOLO model was trained on
 CLASSES = load_coco_class_labels(args=args);
@@ -132,7 +135,7 @@ def perform_yolov5_inference(input_image, net):
     before = time.perf_counter();
     predictions = net.forward();
     after = time.perf_counter();
-    print(f"[INFO] YoloV5 inference time: {after - before}s");
+    print(f"[INFO]: YoloV5 inference time: {after - before}s");
 
     return predictions;
 
@@ -193,7 +196,7 @@ def process_yolov5_detection(boxes, classIDs, confidences, rgb_frame):
         # box coordinates and start a dlib 
         # correlation tracker. 
         tracker = dlib.correlation_tracker();
-        rect = dlib.rectangle(startX, startY, endX, endY);
+        rect = dlib.rectangle(int(startX), int(startY), int(endX), int(endY));
         tracker.start_track(rgb_frame, rect);
 
         # Add the tracker to our list of trackers
@@ -284,18 +287,17 @@ while True:
         # Store the trackable object in our dictionary
         trackable_objects[objectID] = trackable_object;
 
-        # Draw both ID of the object and its centroid
-        text = "ID {}".format(objectID);
-        cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2);
+        # Display ID of the object and draw its centroid
+        cv2.putText(frame, f"ID {objectID}", (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2);
         cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1);
     
-    # Construct tuples of information to display on the frame
-    info = [ ("Exited", total_out), ("Entered", total_in), ("Status", status) ];
-
-    # Loop through the info tuples and display them on the frame
-    for (i, (k, v)) in enumerate(info):
-        text = "{}: {}".format(k, v);
-        cv2.putText(frame, text, (10,  ((i * 20) + 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2);
+    # Display interesting information on the frame,
+    # such as how many people have entered, exited,
+    # and in what state the program is currently in 
+    # (waiting, detecting, tracking)
+    cv2.putText(frame, f"Exited: {total_out}", (10,  20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2);
+    cv2.putText(frame, f"Entered: {total_in}", (10,  40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2);
+    cv2.putText(frame, f"Status: {status}", (10,  60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2);
     
     # Display the frame
     frame = imutils.resize(frame, width=output_width);
@@ -310,19 +312,23 @@ while True:
     # Update timer 
     fps.update();
 
-    # Ensure fixed framerate based on video framerate
-    timeDiff = time.time() - current_time;
-    if(timeDiff < 1.0/(video_framerate)):
-        time.sleep(1.0/(video_framerate) - timeDiff);
+    # Check if pre-recorded video is used
+    # and ensure fixed framerate based on 
+    # the variable video_framerate
+    if not video_framerate == None:
+        timeDiff = time.time() - current_time;
+        if(timeDiff < 1.0/(video_framerate)):
+            time.sleep(1.0/(video_framerate) - timeDiff);
 
 # Stop fps counter
 fps.stop();
 
 # Print information
-print("[INFO]: elapsed time: {:.2f}".format(fps.elapsed()));
-print("[INFO]: approximate FPS: {:.2f}".format(fps.fps()));
+print(f"[INFO]: elapsed time: {fps.elapsed():.2f}");
+print(f"[INFO]: approximate FPS: {fps.fps():.2f}");
 print(f'[INFO]: Found {total_in} people entering, and {total_out} people exiting...');
 
 # Release resources and close application
 video_capture.release();
 cv2.destroyAllWindows();
+print("[INFO]: Terminating...")
