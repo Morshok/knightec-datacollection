@@ -94,7 +94,7 @@ def create_AWS_thread():
     global aws_updating_in_progress;
 
     if not aws_updating_in_progress:
-        print("[INFO] Contacting AWS for updates in {} seconds".format(aws_update_time_sec));
+        print("[INFO]: Contacting AWS for updates in {} seconds".format(aws_update_time_sec));
         thread = threading.Thread(target=contact_AWS);
         thread.start();
         aws_updating_in_progress = True;
