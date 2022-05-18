@@ -60,17 +60,29 @@ confidenceThreshold = 0.5;
 # detect
 CLASSES = get_class_labels();
 
+# Variables for getting the height 
+# and the width of the frame
 (Height, Width) = (None, None);
+
+# Variables for controlling the width and height
+# while performing OpenCV operations
 processing_width = 250;
 output_width = 700;
 
+# Initialize a centroid tracker with
+# a maxDisappeared value of 30
 centroid_tracker = CentroidTracker(30);
+
+# Initialize lists and arrays for 
+# trackers and trackable objects
 trackers = [];
 trackable_objects = { };
 
-total_out = 0;
-total_in = 0;
+# Variables for keeping track of 
+# how many people have moved in or out
+(total_out, total_in) = (0, 0);
 
+# Initialize and start fps counter
 fps = FPS().start();
 
 # After how many seconds should we contanct AWS
