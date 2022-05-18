@@ -1,9 +1,9 @@
 from tracking.centroidtracker import CentroidTracker
 from tracking.trackableobject import TrackableObject
-aws_handler = __import__('knightec-backend/aws_handler');
 from tracking.trackableobject import Direction
 from imutils.video import VideoStream
 from imutils.video import FPS
+from aws_handler import *
 import numpy as np
 import threading
 import argparse
@@ -12,8 +12,6 @@ import time
 import dlib
 import time
 import cv2
-
-aws_handler.add_entry_event();
 
 argument_parser = argparse.ArgumentParser();
 argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1,
@@ -31,7 +29,7 @@ def load_video_capture(use_camera):
     video_capture = cv2.VideoCapture(0, cv2.CAP_V4L2);
     return video_capture, None;
 
-def get_class_labels(args):
+def get_class_labels():
     classes = [
         "background", "aeroplane", "bicycle", "bird", "boat",
         "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
@@ -109,12 +107,61 @@ def contact_AWS():
     time.sleep(aws_update_time_sec);
 
     print("[Info]: Contacting Aws...");
-    time.sleep(2.0);
-    print("{} persons entered".format(total_in));
-    print("{} persons exited".format(total_out));
+    add_entry_event(total_in, total_out);
+    print(f"{total_in} persons entered");
+    print(f"{total_out} persons exited");
     total_in = 0;
     total_out = 0;
     aws_updating_in_progress = False;
+
+def perform_MobileNetSSD_inference(frame, net):
+    global Width, Height;
+
+    # Convert frame into blob and pass it
+    # through the network to obtain the detections
+    blob = cv2.dnn.blobFromImage(frame, 0.007843, (Width, Height), 127.5);
+    before = time.perf_counter();
+    net.setInput(blob);
+    detections = net.forward();
+    after = time.perf_counter();
+    print(f'[INFO]: MobileNet-SSD Inference time: {after - before}s');
+
+    return detections;
+
+def process_MobileNetSSD_detections(detections, confidenceThreshold):
+    global CLASSES, trackers;
+
+    # Loop through the detections
+    for i in np.arange(0, detections.shape[2]):
+        # Extract the confidence of the prediction
+        # from the detection
+        confidence = detections[0, 0, i, 2];
+
+        # Filter out the weak detections by 
+        # requiring a minumum confidence
+        if confidence > confidenceThreshold:
+            # Extract the index of the class 
+            # label and check if it is person
+            index = int(detections[0, 0, i, 1]);
+
+            if CLASSES[index] != 'person':
+                continue;
+            
+            # Compute the (x, y) - coordinates for the 
+            # bounding box of the detected person
+            box = detections[0, 0, i, 3:7] * np.array([Width, Height, Width, Height]);
+            (startX, startY, endX, endY) = box.astype("int");
+
+            # Construct a dlib rectangle from bounding 
+            # box coordinates and start a dlib 
+            # correlation tracker. 
+            tracker = dlib.correlation_tracker();
+            rect = dlib.rectangle(int(startX), int(startY), int(endX), int(endY));
+            tracker.start_track(rgb_frame, rect);
+
+            # Add the tracker to our list of trackers
+            # so we can utilize it during skip frames
+            trackers.append(tracker);
 
 start_time = time.time();
 while True:
@@ -140,46 +187,8 @@ while True:
         status = "Detecting";
         trackers = [];
 
-        # Convert frame into blob and pass it
-        # through the network to obtain the detections
-        blob = cv2.dnn.blobFromImage(frame, 0.007843, (Width, Height), 127.5);
-        before = time.perf_counter();
-        net.setInput(blob);
-        detections = net.forward();
-        after = time.perf_counter();
-        print(f'Inference time: {after - before}s');
-
-        # Loop through the detections
-        for i in np.arange(0, detections.shape[2]):
-            # Extract the confidence of the prediction
-            # from the detection
-            confidence = detections[0, 0, i, 2];
-
-            # Filter out the weak detections by 
-            # requiring a minumum confidence
-            if confidence > confidenceThreshold:
-                # Extract the index of the class 
-                # label and check if it is person
-                index = int(detections[0, 0, i, 1]);
-
-                if CLASSES[index] != 'person':
-                    continue;
-                
-                # Compute the (x, y) - coordinates for the 
-                # bounding box of the detected person
-                box = detections[0, 0, i, 3:7] * np.array([Width, Height, Width, Height]);
-                (startX, startY, endX, endY) = box.astype("int");
-
-                # Construct a dlib rectangle from bounding 
-                # box coordinates and start a dlib 
-                # correlation tracker. 
-                tracker = dlib.correlation_tracker();
-                rect = dlib.rectangle(int(startX), int(startY), int(endX), int(endY));
-                tracker.start_track(rgb_frame, rect);
-
-                # Add the tracker to our list of trackers
-                # so we can utilize it during skip frames
-                trackers.append(tracker);
+        detections = perform_MobileNetSSD_inference(frame, net);
+        process_MobileNetSSD_detections(detections, confidenceThreshold);
     # If not, utilize object trackers to decrease computational cost
     else:
         for tracker in trackers:
@@ -209,11 +218,11 @@ while True:
             trackable_object.centroids.append(centroid);
 
             if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
-                # create_AWS_thread();
+                create_AWS_thread();
                 total_out += 1;
                 trackable_object.trackingDirection = Direction.Down;
             elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
-                # create_AWS_thread();
+                create_AWS_thread();
                 total_in += 1;
                 trackable_object.trackingDirection = Direction.Up;
 
