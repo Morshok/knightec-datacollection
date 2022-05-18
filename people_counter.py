@@ -47,6 +47,7 @@ def build_MobileNetSSD_net():
 
     return net;
 
+# Load video capture
 video_capture, video_framerate = load_video_capture(use_camera=False);
 video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1);
 
