@@ -2,6 +2,7 @@ from tracking.centroidtracker import CentroidTracker
 from tracking.trackableobject import TrackableObject
 from tracking.trackableobject import Direction
 from imutils.video import FPS
+from aws_handler import *
 import numpy as np
 import threading
 import argparse
@@ -56,7 +57,7 @@ def build_yolov5_net(args):
 
 # Load video capture and get video frame rate.
 # Set use_camera to True to use camera instead of video
-video_capture, video_framerate = load_video_capture(use_camera=True);
+video_capture, video_framerate = load_video_capture(use_camera=False);
 video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1);
 
 # Load the COCO class labels our YOLO model was trained on
@@ -111,10 +112,10 @@ def contact_AWS():
 
     time.sleep(aws_update_time_sec);
 
-    print("[Info]: Contacting AWS...");
+    print("[Info]: Contacting Aws...");
+    add_entry_event(total_in, total_out);
     print(f"{total_in} persons entered");
     print(f"{total_out} persons exited");
-
     total_in = 0;
     total_out = 0;
     aws_updating_in_progress = False;
@@ -276,11 +277,11 @@ while True:
             trackable_object.centroids.append(centroid);
 
             if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
-                # create_AWS_thread();
+                create_AWS_thread();
                 total_out += 1;
                 trackable_object.trackingDirection = Direction.Down;
             elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
-                # create_AWS_thread();
+                create_AWS_thread();
                 total_in += 1;
                 trackable_object.trackingDirection = Direction.Up;
 
