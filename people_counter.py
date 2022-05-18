@@ -1,5 +1,6 @@
 from tracking.centroidtracker import CentroidTracker
 from tracking.trackableobject import TrackableObject
+aws_handler = __import__('knightec-backend/aws_handler');
 from tracking.trackableobject import Direction
 from imutils.video import VideoStream
 from imutils.video import FPS
@@ -11,6 +12,8 @@ import time
 import dlib
 import time
 import cv2
+
+aws_handler.add_entry_event();
 
 argument_parser = argparse.ArgumentParser();
 argument_parser.add_argument("-s", "--skip-seconds", type=int, default=1,
