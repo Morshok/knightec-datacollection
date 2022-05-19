@@ -163,6 +163,26 @@ def process_MobileNetSSD_detections(detections, confidenceThreshold):
             # so we can utilize it during skip frames
             trackers.append(tracker);
 
+def blur_part_of_frame(frame, startX, startY, endX, endY):
+    global Width, Height;
+
+    if endX > Width:
+        endX = Width;
+    if endY > Height:
+        endY = Height;
+    if startX < 0:
+        startX = 0;
+    if startY < 0:
+        startY = 0;
+
+    kernel_size = (101, 101);
+
+    region_of_interest = frame[startY:endY, startX:endX];
+    region_of_interest = cv2.GaussianBlur(region_of_interest, kernel_size, 0);
+    frame[startY:endY, startX:endX] = region_of_interest;
+
+    return frame;
+
 start_time = time.time();
 while True:
     current_time = time.time();
@@ -199,7 +219,9 @@ while True:
             position = tracker.get_position();
             (startX, startY, endX, endY) = (int(position.left()), int(position.top()), int(position.right()), int(position.bottom()));
             rects.append((startX, startY, endX, endY));
-    
+
+            frame = blur_part_of_frame(frame, startX, startY, endX, endY);
+
     # Draw horizontal line in the middle of the screen
     cv2.line(frame, (0, Height // 2), (Width, Height // 2), (0, 255, 255), 2);
     
@@ -218,11 +240,11 @@ while True:
             trackable_object.centroids.append(centroid);
 
             if not (trackable_object.trackingDirection == Direction.Down) and direction < 0 and centroid[1] < Height // 2:
-                create_AWS_thread();
+                #create_AWS_thread();
                 total_out += 1;
                 trackable_object.trackingDirection = Direction.Down;
             elif not (trackable_object.trackingDirection == Direction.Up) and direction > 0 and centroid[1] > Height // 2:
-                create_AWS_thread();
+                #create_AWS_thread();
                 total_in += 1;
                 trackable_object.trackingDirection = Direction.Up;
 
