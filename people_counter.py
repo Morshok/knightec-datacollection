@@ -203,7 +203,27 @@ def process_yolov5_detection(boxes, classIDs, confidences, rgb_frame):
         # Add the tracker to our list of trackers
         # so we can utilize it during skip frames
         trackers.append(tracker);
+        
+def blur_part_of_frame(frame, startX, startY, endX, endY):
+    global Width, Height;
 
+    if endX > Width:
+        endX = Width;
+    if endY > Height:
+        endY = Height;
+    if startX < 0:
+        startX = 0;
+    if startY < 0:
+        startY = 0;
+
+    kernel_size = (101, 101);
+
+    region_of_interest = frame[startY:endY, startX:endX];
+    region_of_interest = cv2.GaussianBlur(region_of_interest, kernel_size, 0);
+    frame[startY:endY, startX:endX] = region_of_interest;
+
+    return frame;        
+        
 # Get start time
 start_time = time.perf_counter();
 while True:
@@ -251,6 +271,8 @@ while True:
             position = tracker.get_position();
             (startX, startY, endX, endY) = (int(position.left()), int(position.top()), int(position.right()), int(position.bottom()));
             rects.append((startX, startY, endX, endY));
+            
+            frame = blur_part_of_frame(frame, startX, startY, endX, endY);
     
     # Draw horizontal line in the middle of the screen
     cv2.line(frame, (0, Height // 2), (Width, Height // 2), (0, 255, 255), 2);
