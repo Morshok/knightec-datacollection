@@ -121,18 +121,42 @@ def contact_AWS():
     aws_updating_in_progress = False;
 
 def format_for_yolov5_inference(frame):
+    ''' 
+        Method for formatting an input frame for
+        Use in YOLOv5 inference. YOLOv5 accepts an
+        image of size 300x300.
+    '''
+
+    # Get width and height from the input frame
+    # and determine which of the two has the 
+    # highest value
     width, height, channels = frame.shape;
     maxOfWidthOrHeight = max(width, height);
 
+    # Create a rectangle that is maxOfWidthOrHeight x maxOfWidthOrHeight
+    # and set all pixel values to zero. Then put the original image 
+    # back between x=(0-width) and y=(0-height)
     result = np.zeros((maxOfWidthOrHeight, maxOfWidthOrHeight, 3), np.uint8);
     result[0:width, 0:height] = frame;
     
     return result;
 
 def perform_yolov5_inference(input_image, net):
+    ''' 
+        Method for performing YOLOv5 inference. The input
+        image is converted into a blob that is later input
+        into the YOLOv5 network for inference. The inference
+        time is measured and printed, and the method returns
+        the predictions from the YOLOv5 inference.
+    '''
+
+    # Convert our input image into a blob and set it as
+    # input to our YOLOv5 network.
     blob = cv2.dnn.blobFromImage(input_image, 1 / 255.0, (640, 640), swapRB=True, crop=False);
     net.setInput(blob);
     
+    # Perform YOLOv5 inference with input blob
+    # and measure inference time
     before = time.perf_counter();
     predictions = net.forward();
     after = time.perf_counter();
@@ -141,35 +165,60 @@ def perform_yolov5_inference(input_image, net):
     return predictions;
 
 def unwrap_yolov5_detections(input_image, predictions, confidence_threshold, nms_threshold):
+    ''' 
+        Method for unwrapping the predictions from the
+        YOLOv5 inference. Checks whether class confidence
+        is above set confidence threshold and performs
+        Non-Maxima Suppression.
+    '''
+    # Create empty lists for resulting bounding boxes,
+    # corresponding classId's and confidences
     boxes = [];
     classIDs = [];
     confidences = [];
 
+    # Get total amount of predictions
     num_rows = predictions.shape[0];
 
+    # Get input image dimensions and initiate
+    # two scale factor variables
     image_width, image_height, channels = input_image.shape;
     x_factor = image_width / 640;
     y_factor = image_height / 640;
 
+    # Loop through all predictions row by row
     for r in range(num_rows):
+        # Get prediction at row index r and extract its confidence score
         row = predictions[r];
         confidence = row[4];
 
+        # Check if the confidence score is greater than the 
+        # confidence threshold. This filters out weak detections.
         if confidence > confidence_threshold:
+            # Extract the classID of the detection
             class_scores = row[5:];
             _, _, _, max_index = cv2.minMaxLoc(class_scores);
             classID = max_index[1];
 
+            # Extract the bounding box coordinates of the detection and 
+            # construct a box given said coordinates
             (x, y, w, h) = (row[0].item(), row[1].item(), row[2].item(), row[3].item())
             (startX, startY, endX, endY) = (int((x - 0.5 * w) * x_factor), int((y - 0.5 * h) * y_factor), int(w * x_factor), int(h * y_factor));
             box = np.array([startX, startY, endX, endY]);
 
+            # Add variables to our lists
             boxes.append(box);
             classIDs.append(classID);
             confidences.append(confidence);
 
+    # Perform non-maxima suppression, which removes overlapping
+    # bounding boxes representing the same object, and get the 
+    # resulting indices in our lists.
     indices = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, nms_threshold);
 
+    # Get the boxes, classID's and confidences
+    # after non-maxima suppression has been performed
+    # using the indices given by the function.
     resulting_boxes = [];
     resulting_classIDs = [];
     resulting_confidences = [];
@@ -182,6 +231,14 @@ def unwrap_yolov5_detections(input_image, predictions, confidence_threshold, nms
     return resulting_boxes, resulting_classIDs, resulting_confidences;
 
 def process_yolov5_detection(boxes, classIDs, confidences, rgb_frame):
+    ''' 
+        Method for going through our unwrapped predictions
+        and checking if the detected object class corresponds
+        to that of a person. Then bounding box coordinates
+        are extracted and used to create a new kernalized 
+        correlation filter object tracker and add it to our
+        list of object trackers. 
+    '''
     global CLASSES, trackers;
 
     for (box, classID, confidence) in zip(boxes, classIDs, confidences):
